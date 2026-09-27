@@ -730,8 +730,9 @@ def passes_lines(st, cfg, passes, pal):
     L = []
     add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
     if "lat" not in cfg:
-        add("Set your location:", "muted")
-        add("issquatch setup", "accent")
+        add("Where are you watching from?", "foreground")
+        add("Press l to set your location", "accent", True)
+        add("and see the passes you can spot.", "muted")
         return L
     place = cfg.get("place") or f"{cfg['lat']:.2f}, {cfg['lon']:.2f}"
     add("Visible from " + place, "muted")
@@ -817,6 +818,89 @@ def station_lines(iss, st, info, pal, flags):
 PAGES = ["passes", "crew", "station"]
 
 
+def prompt_lines(prompt, pal):
+    """The location box: typing, looking it up, or picking one of several matches."""
+    L = []
+    add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
+    add("SET YOUR LOCATION", "cyan", True)
+    if prompt["mode"] == "pick":
+        add(f"{len(prompt['results'])} places called that:", "muted")
+        add()
+        for i, (_, _, name) in enumerate(prompt["results"], 1):
+            add(f"{i}  {name}", "foreground" if i > 1 else "accent", i == 1)
+        add()
+        add(f"1-{len(prompt['results'])} or Enter picks · Esc back", "muted")
+        return L
+    add("A town, an address, or lat, lon", "muted")
+    add()
+    add("> " + prompt["text"] + ("…" if prompt["mode"] == "busy" else "█"), "accent", True)
+    add()
+    if prompt["mode"] == "busy":
+        add("Looking it up…", "muted")
+    elif prompt.get("error"):
+        add(prompt["error"], "red")
+    add("Enter to search · Esc to cancel", "muted")
+    add("Looked up once with OpenStreetMap.", "muted")
+    return L
+
+
+def prompt_key(state, k):
+    """One keypress for the location box. Returns True when the box closes."""
+    pr = state["prompt"]
+    if k == "\x1b":  # a lone Esc; arrow keys and friends arrive as longer escape sequences
+        if pr["mode"] == "pick":
+            pr.update(mode="type", results=[])
+            return False
+        return True
+    if k.startswith("\x1b"):
+        return False
+    if pr["mode"] == "pick":
+        if k in ("\r", "\n") or (k.isdigit() and 1 <= int(k) <= len(pr["results"])):
+            lat, lon, place = pr["results"][int(k) - 1 if k.isdigit() else 0]
+            return finish_location(state, lat, lon, place)
+        return False
+    for ch in k:
+        if ch in ("\r", "\n"):
+            return search_location(state)
+        if ch in ("\x7f", "\x08"):
+            pr["text"] = pr["text"][:-1]
+        elif ch.isprintable() and len(pr["text"]) < 60:
+            pr["text"] += ch
+        pr["error"] = ""
+    return False
+
+
+def search_location(state):
+    pr = state["prompt"]
+    text = pr["text"].strip()
+    if not text:
+        return False
+    coords = parse_latlon(text)
+    if coords:
+        return finish_location(state, coords[0], coords[1], f"{coords[0]:.2f}, {coords[1]:.2f}")
+    pr["mode"] = "busy"
+    draw(state)  # show "Looking it up…" while Nominatim answers
+    try:
+        found = geocode(text)
+    except Exception:
+        found = None
+        pr.update(mode="type", error="Couldn't reach OpenStreetMap. Try lat, lon.")
+        return False
+    if not found:
+        pr.update(mode="type", error=f"Nothing called '{text[:20]}'.")
+        return False
+    if len(found) == 1:
+        return finish_location(state, *found[0])
+    pr.update(mode="pick", results=found)
+    return False
+
+
+def finish_location(state, lat, lon, place):
+    set_location(state["cfg"], lat, lon, place)
+    state["passes"], state["passes_at"], state["page"] = None, 0, "passes"
+    return True
+
+
 def draw(state):
     cols, rows = shutil.get_terminal_size()
     pal = state["pal"]
@@ -859,7 +943,8 @@ def draw(state):
             tx += len(label) + 2
         y += 2
         flags = cfg.get("flags", "emoji")
-        body = (passes_lines(st, cfg, state["passes"], pal) if page == "passes" else
+        body = (prompt_lines(state["prompt"], pal) if state["prompt"] else
+                passes_lines(st, cfg, state["passes"], pal) if page == "passes" else
                 crew_lines(state["info"], pal, flags) if page == "crew" else
                 station_lines(iss, st, state["info"], pal, flags))
         for s, c, b in body:
@@ -868,6 +953,13 @@ def draw(state):
             scr.write(x, y, s[:cols - x - 1], c, b)
             y += 1
 
+    elif state["prompt"]:  # narrow window, location box open: it takes the space under the map
+        y = min(rows - 2, top + map_h + 1)
+        for s, c, b in prompt_lines(state["prompt"], pal):
+            if y >= rows - 1:
+                break
+            scr.write(1, y, s[:cols - 2], c, b)
+            y += 1
     else:  # narrow window: two status lines under the map instead of the panel
         y = min(rows - 3, top + map_h + 1)
         ns, ew = ("N" if st["lat"] >= 0 else "S"), ("E" if st["lon"] >= 0 else "W")
@@ -875,7 +967,7 @@ def draw(state):
                         f"{st['speed']:,.0f} km/h · {'sunlit' if st['sunlit'] else 'in shadow'}", pal["foreground"])
         passes = state["passes"]
         if "lat" not in cfg:
-            line, c = "Set your location for passes: issquatch setup", "muted"
+            line, c = "Press l to set your location and see the passes you can spot", "muted"
         elif passes:
             p = passes[0]
             line, c = (f"Next visible: {local(p['vis_start']).strftime('%a %H:%M')} "
@@ -886,7 +978,7 @@ def draw(state):
         scr.write(1, y + 1, line, pal[c])
 
     age = time.time() - iss.fetched
-    keys = "q quit · tab/1-3 pages · t track · r refresh"
+    keys = "q quit · tab/1-3 pages · l location · t track · r refresh"
     scr.write(1, rows - 1, keys, pal["muted"])
     note = f"orbit {fmt_dur(age)} old · CelesTrak" + (" · crew: corquaid" if state["page"] != "passes" else "")
     scr.write(cols - len(note) - 1, rows - 1, note, pal["muted"])
@@ -899,7 +991,7 @@ def draw(state):
 def tui():
     cfg = load_config()
     state = {"iss": ISS(), "cfg": cfg, "land": load_land(), "pal": load_theme(), "track": True, "mode": block_mode(cfg),
-             "passes": None, "passes_at": 0, "theme_mtime": 0, "info": None,
+             "passes": None, "passes_at": 0, "theme_mtime": 0, "info": None, "prompt": None,
              "page": "passes" if "lat" in cfg else "crew"}
 
     def fetch_info():  # crew and docked spacecraft, off the main loop so the map never waits
@@ -932,9 +1024,16 @@ def tui():
             draw(state)
             r, _, _ = select.select([sys.stdin], [], [], 1.0)
             if r:
-                k = os.read(fd, 16).decode(errors="ignore")
+                k = os.read(fd, 64).decode(errors="ignore")
+                if state["prompt"]:
+                    if prompt_key(state, k):
+                        state["prompt"] = None
+                    continue
                 if k in ("q", "Q", "\x1b"):
                     break
+                if k in ("l", "L"):
+                    state["prompt"] = {"mode": "type", "text": "", "results": [], "error": ""}
+                    continue
                 if k == "t":
                     state["track"] = not state["track"]
                 if k == "\t":
@@ -1017,13 +1116,34 @@ def cmd_passes(args):
         print(f"  {local(t0).strftime('%a %d %b %H:%M'):<18}{vis:<10}{p['max_el']:4.0f}°  {p['from']} → {p['to']}")
 
 
-def geocode(query):
-    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({"q": query, "format": "json", "limit": 1})
-    hits = json.loads(http_get(url))
-    if not hits:
+def geocode(query, limit=5):
+    """Up to `limit` matches from OpenStreetMap's Nominatim as (lat, lon, "Place, Country")."""
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"q": query, "format": "json", "limit": limit, "accept-language": "en"})
+    out = []
+    for h in json.loads(http_get(url)):
+        parts = [x.strip() for x in h["display_name"].split(",")]
+        place = parts[0] if len(parts) == 1 else f"{parts[0]}, {parts[-1]}"
+        if place not in [o[2] for o in out]:
+            out.append((float(h["lat"]), float(h["lon"]), place))
+    return out
+
+
+def parse_latlon(text):
+    """(lat, lon) from "39.47, -0.38", or None."""
+    try:
+        lat, lon = (float(v) for v in text.replace(" ", "").split(","))
+    except ValueError:
         return None
-    h = hits[0]
-    return float(h["lat"]), float(h["lon"]), h["display_name"].split(",")[0]
+    return (lat, lon) if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def set_location(cfg, lat, lon, place):
+    cfg.update(lat=round(lat, 4), lon=round(lon, 4), place=place)
+    cfg.setdefault("notify_minutes", 10)
+    cfg.setdefault("min_elevation", 10)
+    cfg.setdefault("notify_min_elevation", 20)
+    save_config(cfg)
 
 
 def cmd_setup(args):
@@ -1035,19 +1155,22 @@ def cmd_setup(args):
         query = input("> ").strip()
     if not query:
         return
-    try:
-        lat, lon = (float(v) for v in query.replace(" ", "").split(","))
-        place = cfg.get("place") if cfg.get("lat") == lat and cfg.get("lon") == lon else f"{lat:.2f}, {lon:.2f}"
-    except ValueError:
+    coords = parse_latlon(query)
+    if coords:
+        lat, lon = coords
+        place = cfg.get("place") if (cfg.get("lat"), cfg.get("lon")) == (lat, lon) else f"{lat:.2f}, {lon:.2f}"
+    else:
         found = geocode(query)
         if not found:
             raise SystemExit(f"Couldn't find '{query}'. Try 'lat, lon' instead.")
-        lat, lon, place = found
-    cfg.update(lat=round(lat, 4), lon=round(lon, 4), place=place)
-    cfg.setdefault("notify_minutes", 10)
-    cfg.setdefault("min_elevation", 10)
-    cfg.setdefault("notify_min_elevation", 20)
-    save_config(cfg)
+        pick = 0
+        if len(found) > 1 and sys.stdin.isatty():
+            for i, (_, _, name) in enumerate(found, 1):
+                print(f"  {i}  {name}")
+            answer = input(f"Which one? [1-{len(found)}, Enter for 1] ").strip()
+            pick = int(answer) - 1 if answer.isdigit() and 1 <= int(answer) <= len(found) else 0
+        lat, lon, place = found[pick]
+    set_location(cfg, lat, lon, place)
     print(f"Watching from {place} ({lat:.4f}, {lon:.4f}). Saved to {CONFIG}")
 
 
@@ -1087,7 +1210,7 @@ HELP = f"""issquatch {VERSION}: the ISS, tracked from the woods.
   issquatch crew             who's aboard, with flags, and what's docked
   issquatch passes [--all] [--week]
                              visible passes from your location (--all includes unlit ones)
-  issquatch setup [PLACE]    set your location: a place name, or "lat, lon"
+  issquatch setup [PLACE]    set your location: a place name, or "lat, lon" (or press l in the map)
   issquatch notify [--test]  notify before a visible pass (the systemd timer runs this)
   issquatch update           fetch fresh orbit data now
 

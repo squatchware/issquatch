@@ -38,7 +38,7 @@ Needs Omarchy (Lua Hyprland config) and Python 3.11+, which Omarchy already has.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/squatchware/issquatch/main/install.sh | bash
-issquatch setup          # where you're watching from
+issquatch setup          # where you're watching from (or press l in the map)
 ```
 
 Or from a checkout (read `install.sh` first, it's short):
@@ -59,6 +59,7 @@ the keybinding, and turns on a systemd user timer for pass notifications. Pick a
 |---|---|
 | <kbd>Super</kbd> + <kbd>Alt</kbd> + <kbd>I</kbd> | Open the map, or focus it if it's already open |
 | <kbd>Tab</kbd> · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Next page · passes, crew, station |
+| <kbd>l</kbd> | Set your location: type a town, an address or `lat, lon`, then pick from the matches |
 | <kbd>t</kbd> · <kbd>r</kbd> · <kbd>q</kbd> | Toggle the ground track · refresh the orbit · quit |
 | `issquatch setup [PLACE]` | Set your location: a town, an address, or `lat, lon` |
 | `issquatch passes [--all] [--week]` | Visible passes for the next 3 (or 7) days. `--all` adds the unlit ones |
