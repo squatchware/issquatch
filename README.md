@@ -14,8 +14,9 @@
 Press <kbd>Super</kbd> + <kbd>Alt</kbd> + <kbd>I</kbd> and a little window pops up over your
 tiles. It shows a pixel world map with the day/night line, the station, the last 45 minutes of
 its ground track and the next 90, plus a panel with its speed, height and whether it's in
-sunlight. Tell it where you live and it lists the passes you can actually see (the station lit
-by the sun while your sky is dark), then taps you on the shoulder ten minutes before a good one.
+sunlight, watched over by the squatch in a space helmet. Tell it where you live and it lists the
+passes you can actually see (the station lit by the sun while your sky is dark), then taps you on
+the shoulder ten minutes before a good one.
 
 It wears your Omarchy theme and repaints when you switch.
 
@@ -62,6 +63,7 @@ place = "London"
 notify_minutes = 10         # how far ahead to warn you
 min_elevation = 10          # ignore passes lower than this
 notify_min_elevation = 20   # only notify for passes that climb at least this high
+blocks = "auto"             # "octant" (sharp, needs Ghostty or kitty) or "half" (works everywhere)
 ```
 
 ## How it works
@@ -71,8 +73,9 @@ notify_min_elevation = 20   # only notify for passes that climb at least this hi
   wheretheiss.at to a tenth of a degree, and pass times agree with Skyfield to the second.
 - **Visible passes:** above 10°, with the station in sunlight (outside Earth's shadow) while the
   sun is at least 6° below your horizon. That's when it's the bright, steady dot people spot.
-- **Map:** Natural Earth's 1:110m coastlines (public domain), baked into a half-degree bitmap and
-  drawn two pixels per character with half blocks. The night side comes from the subsolar point.
+- **Map:** Natural Earth's 1:110m coastlines (public domain), baked into a half-degree bitmap. In
+  Ghostty and kitty it's drawn with Unicode 16 octants, eight square pixels to a character; other
+  terminals get half blocks, two to a character. The night side comes from the subsolar point.
 - **Privacy:** a place name is looked up once with OpenStreetMap's Nominatim when you run
   `setup`. Nothing else leaves your machine apart from the CelesTrak download.
 

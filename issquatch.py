@@ -313,41 +313,90 @@ BOLD = "\x1b[1m"
 
 # ============================================================ drawing
 
-# The squatch, 16x16 (Squatchware brand art: not covered by the MIT licence, not for reuse).
+# The squatch in his space helmet, 32x32 (Squatchware brand art: not covered by the MIT licence,
+# not for reuse). "~" is the helmet glass, tinted from the theme at draw time.
 HEAD = """\
-....RRRRRRRR....
-...RRRRRRRRRR...
-..RRRRRGGRRRRR..
-.bbbbbbbbbbbbbb.
-.oFFLFFFFFFLFFo.
-oFFFFFFFFFFFFFFo
-oFDDDDDFFDDDDDFo
-oFLPeWPFFPeWPLFo
-oFFPPPPDDPPPPFFo
-oFLFPPPDDPPPFLFo
-oFFFPDDDDDDPFFFo
-oFLFFPPPPPPFFLFo
-.oFFLFFFFFFLFFo.
-..oFFFFFFFFFFo..
-...oooFFFFooo...
-......oooo......""".split("\n")
-HEAD_PAL = {"R": "#a83232", "b": "#6e1f1f", "G": "#d4a832", "o": "#1a1a2e", "e": "#1a1a2e", "W": "#fff8dc",
-            "F": "#a0582a", "L": "#d5a269", "D": "#542e27", "P": "#e9d19f"}
+..............hhhh..............
+..........hhhhhhhhhhhh..........
+........hhh~~~~~~~~~~hhh........
+.......hh~H~~~~~~~~~~~~hh.......
+......hh~HH~~~~~~~~~~~~~hh......
+.....hhHHH~~~~~~~~~~~~~H~hh.....
+....hh~HH~~~RRRRRRRR~~~~H~hh....
+....h~HH~~RRRRRRRRRRRR~~~~~h....
+...hhHH~~RRRRRRGGRRRRRR~~~~hh...
+...h~H~~RRRRRRRGGRRRRRRR~~~~h...
+..hh~H~bbbbbbbbbbbbbbbbbb~~~hh..
+..h~~~~oFFLFFFFFFFFFFLFFo~~~~h..
+..h~~~oFFFFFFFFFFFFFFFFFFo~~~h..
+..h~~~oFDDDDDDFFFFDDDDDDFo~~~h..
+..h~~~oFLPPPPPFFFFPPPPPLFo~~~h..
+..h~~~oFLPPeWPFFFFPeWPPLFo~~~h..
+..h~~~oFFPPeePFDDFPeePPFFo~~~h..
+..h~~~oFLFPPPPDDDDPPPPFLFo~~~h..
+..hh~~oFFFPPPDDDDDDPPPFFFo~~hh..
+...h~~oFLFFPPPoooooPPPFLFo~~h...
+...hh~oFFFFPPPPPPPPPPFFFFo~hh...
+....h~~oFFLFFPPPPPPFFLFFo~~h....
+....hh~~oFFFFFFFFFFFFFFo~~hh....
+.....hh~~ooFFFFFFFFFFoo~~hh.....
+......hh~~~oooooooooo~~~hh......
+.......hh~~~~~~~~~~~~~~hh.......
+....kkkkkkkkkkkkkkkkkkkkkkk.....
+...krrrrrrrrrrrrrrrrrrrrrrrk....
+..krrrrrrrrrrOGGGGOrrrrrrrrrk...
+..krrrrrrrrrrOGGGGOrrrrrrrrrk...
+..krrrrrrrrrrrrrrrrrrrrrrrrrk...
+...kkkkkkkkkkkkkkkkkkkkkkkkk....""".split("\n")
+HEAD_PAL = {"R": "#a83232", "b": "#6e1f1f", "G": "#d4a832", "O": "#b8862a", "o": "#1a1a2e", "e": "#1a1a2e",
+            "W": "#fff8dc", "F": "#a0582a", "L": "#d5a269", "D": "#542e27", "P": "#e9d19f", "h": "#cfe3f2",
+            "H": "#ffffff", "r": "#c8ccd4", "k": "#6b7280"}
 
-# The station: truss, modules and four solar wings, in map pixels.
-STATION = ["#.#.#", "#####", "#.#.#"]
+# The station: solar wings either side of the truss, modules down the middle.
+STATION = {
+    "fine": ["###.#...#.###", "###.#...#.###", "###.#.#.#.###", "#############",
+             "###.#.#.#.###", "###.#...#.###", "###.#...#.###"],
+    "coarse": ["#.#.#", "#####", "#.#.#"],
+}
+
+# Octants: 2x4 pixels per character cell. Unicode 16 has 230 of them; the other 26 patterns are
+# older block characters. Bit n is pixel n+1, counted left to right, top to bottom.
+OCTANTS = {}
+for _cp in range(0x1CD00, 0x1CDE6):
+    _n = __import__("unicodedata").name(chr(_cp), "")
+    if _n.startswith("BLOCK OCTANT-"):
+        OCTANTS[sum(1 << (int(d) - 1) for d in _n.split("-")[1])] = chr(_cp)
+if len(OCTANTS) < 230:  # a Python without Unicode 16 data: the code points are fixed, so rebuild them
+    _missing = {0, 1, 2, 3, 5, 10, 15, 20, 40, 63, 64, 80, 85, 90, 95, 128, 160, 165, 170, 175, 192, 240, 245, 250, 252, 255}
+    OCTANTS = dict(zip([m for m in range(256) if m not in _missing], map(chr, range(0x1CD00, 0x1CDE6))))
+OCTANTS.update({0: " ", 1: "\U0001CEA8", 2: "\U0001CEAB", 3: "\U0001FB82", 5: "▘", 10: "▝", 15: "▀", 20: "\U0001FBE6",
+                40: "\U0001FBE7", 63: "\U0001FB85", 64: "\U0001CEA3", 80: "▖", 85: "▌", 90: "▞", 95: "▛", 128: "\U0001CEA0",
+                160: "▗", 165: "▚", 170: "▐", 175: "▜", 192: "▂", 240: "▄", 245: "▙", 250: "▟", 252: "▆", 255: "█"})
+HALVES = {0: " ", 1: "▀", 2: "▄", 3: "█"}
+
+
+def block_mode(cfg):
+    """Octants where the terminal draws them itself (Ghostty, kitty); half blocks everywhere else."""
+    want = os.environ.get("ISSQUATCH_BLOCKS") or cfg.get("blocks", "auto")
+    if want in ("octant", "half"):
+        return want
+    term = (os.environ.get("TERM_PROGRAM", "") + " " + os.environ.get("TERM", "")).lower()
+    return "octant" if ("ghostty" in term or "kitty" in term) else "half"
 
 
 class Screen:
-    """A grid of map pixels drawn two to a character cell with half blocks, plus a text layer."""
+    """Pixels drawn sx by sy to a character cell (2x4 octants or 1x2 half blocks), plus a text layer.
+    Each cell can only show two colours, so a cell with more keeps the pair that fits it best."""
 
-    def __init__(self, cols, rows):
-        self.cols, self.rows = cols, rows
-        self.px = [[None] * cols for _ in range(rows * 2)]
+    def __init__(self, cols, rows, mode):
+        self.cols, self.rows, self.mode = cols, rows, mode
+        self.sx, self.sy = (2, 4) if mode == "octant" else (1, 2)
+        self.w, self.h = cols * self.sx, rows * self.sy
+        self.px = [[None] * self.w for _ in range(self.h)]
         self.text = {}
 
     def put(self, x, y, c):
-        if 0 <= x < self.cols and 0 <= y < self.rows * 2:
+        if 0 <= x < self.w and 0 <= y < self.h:
             self.px[y][x] = c
 
     def write(self, x, y, s, colour, bold=False):
@@ -355,68 +404,162 @@ class Screen:
             if 0 <= x + i < self.cols and 0 <= y < self.rows:
                 self.text[(x + i, y)] = (ch, colour, bold)
 
+    def cell(self, x, y, base):
+        sx, sy = self.sx, self.sy
+        return [self.px[y * sy + j][x * sx + i] or base for j in range(sy) for i in range(sx)]
+
+    @staticmethod
+    def two_colours(pix):
+        counts = {}
+        for p in pix:
+            counts[p] = counts.get(p, 0) + 1
+        if len(counts) <= 2:
+            cs = sorted(counts, key=counts.get, reverse=True)
+            return cs[0], cs[-1]
+        dist = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+        best, pair = None, None
+        cs = list(counts)
+        for i in range(len(cs)):
+            for j in range(i + 1, len(cs)):
+                err = sum(n * min(dist(c, cs[i]), dist(c, cs[j])) for c, n in counts.items())
+                if best is None or err < best:
+                    best, pair = err, (cs[i], cs[j])
+        a, b = pair
+        return (a, b) if counts[a] >= counts[b] else (b, a)
+
     def render(self, base):
+        glyphs = OCTANTS if self.mode == "octant" else HALVES
+        dist = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
         out = []
         for row in range(self.rows):
-            line = [f"\x1b[{row + 1};1H"]
+            line, cur_fg, cur_bg = [f"\x1b[{row + 1};1H"], None, None
             for x in range(self.cols):
-                top, bot = self.px[row * 2][x] or base, self.px[row * 2 + 1][x] or base
+                pix = self.cell(x, row, base)
+                back, front = self.two_colours(pix)
                 if (x, row) in self.text:
                     ch, c, b = self.text[(x, row)]
-                    line.append(bg(mix(top, bot, .5)) + fg(c) + (BOLD if b else "") + ch + RESET)
-                elif top == bot:
-                    line.append(bg(top) + " ")
-                else:
-                    line.append(fg(top) + bg(bot) + "▀")
+                    line.append(bg(back) + fg(c) + (BOLD if b else "") + ch + RESET)
+                    cur_fg = cur_bg = None
+                    continue
+                mask = 0
+                if front != back:
+                    for i, p in enumerate(pix):
+                        if dist(p, front) < dist(p, back):
+                            mask |= 1 << i
+                seq = ""
+                if back != cur_bg:
+                    seq += bg(back)
+                    cur_bg = back
+                if mask and front != cur_fg:
+                    seq += fg(front)
+                    cur_fg = front
+                line.append(seq + glyphs[mask])
             out.append("".join(line) + RESET)
         return "".join(out)
 
 
-def draw_map(scr, x0, w, h, land, iss, now_state, cfg, pal, show_track):
-    """Equirectangular map in a w x (h*2) pixel box at column x0."""
+_MAP_CACHE = {}
+
+
+def map_layer(land, w, h, pal, sub):
+    """Land, sea and night for a w x h pixel map. The sun moves a quarter of a degree a minute,
+    so the shading is recomputed at most once a minute; the coastline once per size."""
+    key = ("land", w, h)
+    if key not in _MAP_CACHE:
+        _MAP_CACHE.clear()
+        _MAP_CACHE[key] = [[is_land(land, 90 - (y + .5) / h * 180, (x + .5) / w * 360 - 180) for x in range(w)]
+                           for y in range(h)]
+    skey = ("shade", w, h, tuple(sorted(pal.items())), round(sub[0], 1), round(sub[1] / .25))
+    if skey in _MAP_CACHE:
+        return _MAP_CACHE[skey]
+    for k in [k for k in _MAP_CACHE if k[0] == "shade"]:
+        del _MAP_CACHE[k]
+    mask = _MAP_CACHE[key]
     ocean = mix(pal["background"], pal["blue"], .28)
     ground = mix(pal["background"], pal["green"], .55)
     # night pulls towards the dark end of the theme, whichever end of the palette that is
     light = sum(pal["background"]) > sum(pal["foreground"])
     dark = mix(pal["foreground"], pal["background"], .35) if light else mix(pal["background"], (0, 0, 0), .5)
-    sub = now_state["subsolar"]
-    ph = h * 2
-    for py in range(ph):
-        lat = 90 - (py + .5) / ph * 180
-        for px in range(w):
-            lon = (px + .5) / w * 360 - 180
-            c = ground if is_land(land, lat, lon) else ocean
-            sel = sun_elevation(lat, lon, sub)
-            if sel < 0:  # night, with a soft civil-twilight edge
-                c = mix(c, dark, min(.6, .3 + -sel / 18 * .3))
-            scr.put(x0 + px, py, c)
+    slat, slon = sub[0] * DEG, sub[1] * DEG
+    ss, cs = math.sin(slat), math.cos(slat)
+    coslon = [math.cos((x + .5) / w * 2 * math.pi - math.pi - slon) for x in range(w)]
+    shades = {}
+    rows = []
+    for y in range(h):
+        lat = (90 - (y + .5) / h * 180) * DEG
+        a, b = math.sin(lat) * ss, math.cos(lat) * cs
+        row = []
+        for x in range(w):
+            c = ground if mask[y][x] else ocean
+            s = a + b * coslon[x]
+            if s < 0:  # night, with a soft civil-twilight edge
+                t = min(.6, .3 + math.asin(max(-1.0, s)) / DEG / -18 * .3)
+                k = (c, round(t, 2))
+                if k not in shades:
+                    shades[k] = mix(c, dark, k[1])
+                c = shades[k]
+            row.append(c)
+        rows.append(row)
+    _MAP_CACHE[skey] = rows
+    return rows
+
+
+def draw_map(scr, top, w_cells, h_cells, land, iss, now_state, cfg, pal, show_track):
+    """Equirectangular map filling w_cells x h_cells character cells from row `top`."""
+    w, h = w_cells * scr.sx, h_cells * scr.sy
+    y0 = top * scr.sy
+    layer = map_layer(land, w, h, pal, now_state["subsolar"])
+    for y in range(h):
+        scr.px[y0 + y][:w] = layer[y]
 
     def to_px(lat, lon):
-        return x0 + int((lon + 180) / 360 * w), int((90 - lat) / 180 * ph)
+        return int((lon + 180) / 360 * w) % w, y0 + min(h - 1, int((90 - lat) / 180 * h))
 
+    fine = scr.mode == "octant"
     if show_track:
         now = now_state["time"]
-        for m in range(-45, 93, 1):
-            s = iss.at(now + timedelta(minutes=m))
-            if not s or m == 0:
+        past = mix(pal["muted"], pal["background"], .35)
+        for k in range(-135, 277):  # every 20 s, from 45 minutes ago to 92 minutes ahead
+            s = iss.at(now + timedelta(seconds=20 * k))
+            if not s or k == 0:
                 continue
             x, y = to_px(s["lat"], s["lon"])
-            if m < 0:
-                scr.put(x, y, mix(pal["muted"], pal["background"], .35))
-            elif m % 2 == 0:
+            if k < 0:
+                scr.put(x, y, past)
+            elif (k // (3 if fine else 6)) % 2 == 0:  # dashed ahead
                 scr.put(x, y, pal["accent"])
 
-    sx, sy = to_px(*sub)
-    scr.put(sx, sy, pal["yellow"])
+    sx, sy = to_px(*now_state["subsolar"])
+    for dx, dy in (((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)) if fine else ((0, 0),)):
+        scr.put(sx + dx, sy + dy, pal["yellow"])
     if "lat" in cfg:
         ox, oy = to_px(cfg["lat"], cfg["lon"])
-        for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
-            scr.put(ox + dx, oy + dy, pal["red"] if (dx, dy) != (0, 0) else pal["bright_foreground"])
+        arm = 2 if fine else 1
+        for d in range(-arm, arm + 1):
+            scr.put(ox + d, oy, pal["red"])
+            scr.put(ox, oy + d, pal["red"])
+        scr.put(ox, oy, pal["bright_foreground"])
     ix, iy = to_px(now_state["lat"], now_state["lon"])
-    for dy, row in enumerate(STATION):
+    sprite = STATION["fine" if fine else "coarse"]
+    cx, cy = len(sprite[0]) // 2, len(sprite) // 2
+    for dy, row in enumerate(sprite):
         for dx, ch in enumerate(row):
             if ch == "#":
-                scr.put(ix - 2 + dx, iy - 1 + dy, pal["bright_foreground"])
+                scr.put((ix - cx + dx) % w, iy - cy + dy, pal["bright_foreground"])
+
+
+def draw_head(scr, x, y, pal):
+    """The helmeted squatch with its top-left at cell (x, y): 16x8 cells in octants, and in half
+    blocks every other pixel of it, which keeps the same footprint."""
+    glass = mix(pal["background"], (120, 190, 235), .22)
+    step = 1 if scr.mode == "octant" else 2
+    for py in range(0, 32, step):
+        for px in range(0, 32, step):
+            ch = HEAD[py][px]
+            if ch == ".":
+                continue
+            c = glass if ch == "~" else hexrgb(HEAD_PAL[ch])
+            scr.put(x * scr.sx + px // step, y * scr.sy + py // step, c)
 
 
 def fmt_dur(sec):
@@ -492,17 +635,12 @@ def draw(state):
     iss, cfg = state["iss"], state["cfg"]
     now = datetime.now(timezone.utc)
     st = iss.at(now)
-    scr = Screen(cols, rows)
-    panel_w = 34 if cols >= 90 else 0
+    scr = Screen(cols, rows, state["mode"])
+    panel_w = 38 if cols >= 100 else 0
     map_w = cols - panel_w
-    map_h = min(rows - 2, max(4, round(map_w / 4)))  # 2:1 map in half-block pixels
+    map_h = min(rows - 2, max(4, round(map_w / 4)))  # a 2:1 world, since cells are twice as tall as wide
     top = max(1, (rows - 1 - map_h) // 2)
-    base = pal["background"]
-    sub = Screen(map_w, map_h)
-    draw_map(sub, 0, map_w, map_h, state["land"], iss, st, cfg, pal, state["track"])
-    for y in range(map_h * 2):
-        for x in range(map_w):
-            scr.px[top * 2 + y][x] = sub.px[y][x]
+    draw_map(scr, top, map_w, map_h, state["land"], iss, st, cfg, pal, state["track"])
 
     # header
     scr.write(1, 0, "ISSQUATCH", pal["accent"], True)
@@ -512,16 +650,17 @@ def draw(state):
 
     if panel_w:
         x = map_w + 2
+        lines = panel_lines(iss, st, cfg, state["passes"], pal)
+        live, rest = lines[:7], lines[8:]  # LIVE and its six lines sit beside the squatch
         y = 1
-        if rows >= 34:  # the squatch keeps watch when there's room
-            for hy in range(0, 16, 2):
-                for hx, (a, b) in enumerate(zip(HEAD[hy], HEAD[hy + 1])):
-                    ca = hexrgb(HEAD_PAL[a]) if a != "." else None
-                    cb = hexrgb(HEAD_PAL[b]) if b != "." else None
-                    scr.put(x + 8 + hx, (y + hy // 2) * 2, ca)
-                    scr.put(x + 8 + hx, (y + hy // 2) * 2 + 1, cb)
+        if rows >= 20:  # the squatch, suited up, keeps watch beside the live numbers
+            draw_head(scr, x, y, pal)
+            for i, (s, c, b) in enumerate(live):
+                scr.write(x + 18, y + i, s, c, b)
             y += 9
-        for s, c, b in panel_lines(iss, st, cfg, state["passes"], pal):
+        else:
+            rest = lines
+        for s, c, b in rest:
             if y >= rows - 1:
                 break
             scr.write(x, y, s, c, b)
@@ -549,7 +688,7 @@ def draw(state):
     scr.write(1, rows - 1, keys, pal["muted"])
     note = f"orbit data {fmt_dur(age)} old · CelesTrak"
     scr.write(cols - len(note) - 1, rows - 1, note, pal["muted"])
-    sys.stdout.write(scr.render(base))
+    sys.stdout.write(scr.render(pal["background"]))
     sys.stdout.flush()
 
 
@@ -557,7 +696,7 @@ def draw(state):
 
 def tui():
     cfg = load_config()
-    state = {"iss": ISS(), "cfg": cfg, "land": load_land(), "pal": load_theme(), "track": True,
+    state = {"iss": ISS(), "cfg": cfg, "land": load_land(), "pal": load_theme(), "track": True, "mode": block_mode(cfg),
              "passes": None, "passes_at": 0, "theme_mtime": 0}
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)

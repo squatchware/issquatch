@@ -106,8 +106,15 @@ if command -v hyprctl >/dev/null && [[ -f $HYPR/hyprland.lua ]]; then
 -- issquatch: the ISS, tracked from the woods. Managed by issquatch's install.sh;
 -- remove with \`install.sh --uninstall\`. Loaded from hyprland.lua via require_optional.
 
--- A floating map window, sized for a 2:1 world map plus the pass panel.
-o.window("org.omarchy.issquatch", { float = true, center = true, size = { 1180, 600 } })
+-- A floating map window, sized for a 2:1 world map plus the pass panel. Opaque, so the
+-- windows underneath don't show through the map.
+o.window("org.omarchy.issquatch", {
+  tag = "-default-opacity",
+  float = true,
+  center = true,
+  size = { 1180, 600 },
+  opacity = "1 1",
+})
 
 ${bind}
 EOF
