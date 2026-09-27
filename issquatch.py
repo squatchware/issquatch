@@ -8,7 +8,7 @@ Orbit maths: CelesTrak's TLE for the ISS, propagated with SGP4 (the `sgp4` packa
 into Earth-fixed coordinates with GMST. The sun comes from the Astronomical Almanac's
 low-precision formulae, which are good to about 0.01 degrees and plenty for a shadow line.
 """
-import base64, json, math, os, select, shutil, signal, subprocess, sys, termios, time, tty
+import base64, json, math, os, select, shutil, signal, subprocess, sys, termios, threading, time, tty, zlib
 import tomllib, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +22,11 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "issqua
 THEME = Path.home() / ".local/state/omarchy/current/theme/colors.toml"
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle"
 TLE_MAX_AGE = 12 * 3600
+# Crew and docked spacecraft: the community-maintained ISS APIs (github.com/corquaid)
+CREW_URL = "https://corquaid.github.io/international-space-station-APIs/JSON/people-in-space.json"
+DOCKED_URL = "https://corquaid.github.io/international-space-station-APIs/JSON/iss-docked-spacecraft.json"
+CREW_MAX_AGE = 6 * 3600
+ISS_LAUNCH = datetime(1998, 11, 20, 6, 40, tzinfo=timezone.utc)  # Zarya, the first module
 UA = f"issquatch/{VERSION} (+https://squatchware.dev/issquatch/)"
 
 RE = 6378.137            # WGS84 equatorial radius, km
@@ -81,6 +86,112 @@ def is_land(land, lat, lon):
     y = min(h - 1, max(0, int((90 - lat) / 180 * h)))
     i = y * w + x
     return raw[i >> 3] >> (7 - (i & 7)) & 1
+
+
+_COUNTRIES = None
+SHORT_NAMES = {"United States of America": "United States", "Dem. Rep. Congo": "DR Congo",
+               "Central African Rep.": "Central African Rep", "Bosnia and Herz.": "Bosnia & Herzegovina"}
+
+
+def load_countries():
+    global _COUNTRIES
+    if _COUNTRIES is None:
+        try:
+            d = json.loads((HERE / "share" / "countries.bin").read_text())
+            _COUNTRIES = (zlib.decompress(base64.b64decode(d["grid"])), d["w"], d["h"], d["names"])
+        except (OSError, ValueError, zlib.error):
+            _COUNTRIES = (b"", 0, 0, [])
+    return _COUNTRIES
+
+
+def sea_name(lat, lon):
+    """Good enough for a status line: the oceans, plus the seas people ask about."""
+    if lat < -60:
+        return "Southern Ocean"
+    if lat > 66:
+        return "Arctic Ocean"
+    if 30 < lat < 46 and -6 < lon < 36:
+        return "Mediterranean Sea"
+    if 10 < lat < 31 and -98 < lon < -81:
+        return "Gulf of Mexico"
+    if 9 < lat < 22 and -88 < lon < -60:
+        return "Caribbean Sea"
+    if 36 < lat < 48 and 47 < lon < 55:
+        return "Caspian Sea"
+    if 12 < lat < 30 and 32 < lon < 44:
+        return "Red Sea"
+    if -70 < lon < 20 or (lat > 45 and -80 < lon < -70) or (lat < -40 and -70 < lon < 20):
+        return ("North" if lat >= 0 else "South") + " Atlantic"
+    if 20 <= lon < 147 and lat < 30 and not (lon > 120 and lat > -5):
+        return "Indian Ocean"
+    return ("North" if lat >= 0 else "South") + " Pacific"
+
+
+def over(lat, lon):
+    """The country (or sea) under a point."""
+    grid, w, h, names = load_countries()
+    if w:
+        x = int((lon + 180) / 360 * w) % w
+        y = min(h - 1, max(0, int((90 - lat) / 180 * h)))
+        i = grid[y * w + x]
+        if i:
+            return SHORT_NAMES.get(names[i - 1], names[i - 1])
+    return sea_name(lat, lon)
+
+
+# ============================================================ crew and docked spacecraft
+
+def load_station_info(force=False):
+    """People in space and docked spacecraft, cached for six hours. Returns None when there's
+    neither a cache nor a connection."""
+    path = CACHE / "station.json"
+    try:
+        cached = json.loads(path.read_text())
+    except (OSError, ValueError):
+        cached = None
+    if cached and not force and time.time() - cached.get("fetched", 0) < CREW_MAX_AGE:
+        return cached
+    try:
+        info = {"people": json.loads(http_get(CREW_URL)), "docked": json.loads(http_get(DOCKED_URL)),
+                "fetched": time.time()}
+        CACHE.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(info))
+        return info
+    except Exception:
+        return cached
+
+
+def flag(code, style="emoji"):
+    """A country's flag as its regional-indicator emoji pair (two cells wide), or its letters."""
+    code = (code or "").lower()
+    if len(code) != 2 or not code.isalpha():
+        return "  "
+    if style == "letters":
+        return code.upper()
+    return "".join(chr(0x1F1E6 + ord(c) - ord("a")) for c in code)
+
+
+def crew(info):
+    """(aboard the ISS, everyone else in space, expedition number)."""
+    if not info:
+        return [], [], None
+    people = info["people"].get("people", [])
+    aboard = sorted([p for p in people if p.get("iss")],
+                    key=lambda p: ("Commander" not in (p.get("position") or ""), p.get("launched", 0), p.get("name", "")))
+    return aboard, [p for p in people if not p.get("iss")], info["people"].get("iss_expedition")
+
+
+def next_light_change(iss, now):
+    """When the station next crosses into or out of Earth's shadow (about 16 sunrises a day)."""
+    first = iss.at(now)
+    if not first:
+        return None
+    for k in range(1, 400):  # 20 s steps, a little over one orbit
+        t = now + timedelta(seconds=20 * k)
+        s = iss.at(t)
+        if s and s["sunlit"] != first["sunlit"]:
+            return ("sunset" if first["sunlit"] else "sunrise"), t
+    return None
 
 
 # ============================================================ time, sun, frames
@@ -400,9 +511,20 @@ class Screen:
             self.px[y][x] = c
 
     def write(self, x, y, s, colour, bold=False):
-        for i, ch in enumerate(s):
-            if 0 <= x + i < self.cols and 0 <= y < self.rows:
-                self.text[(x + i, y)] = (ch, colour, bold)
+        """Text at a cell. A flag (two regional indicators) is one glyph two cells wide: it's
+        stored in the first cell and the second is left empty so the columns stay lined up."""
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if 0x1F1E6 <= ord(ch) <= 0x1F1FF and i + 1 < len(s) and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
+                if 0 <= x < self.cols - 1 and 0 <= y < self.rows:
+                    self.text[(x, y)] = (ch + s[i + 1], colour, bold)
+                    self.text[(x + 1, y)] = ("", colour, bold)
+                x, i = x + 2, i + 2
+                continue
+            if 0 <= x < self.cols and 0 <= y < self.rows:
+                self.text[(x, y)] = (ch, colour, bold)
+            x, i = x + 1, i + 1
 
     def cell(self, x, y, base):
         sx, sy = self.sx, self.sy
@@ -438,7 +560,8 @@ class Screen:
                 back, front = self.two_colours(pix)
                 if (x, row) in self.text:
                     ch, c, b = self.text[(x, row)]
-                    line.append(bg(back) + fg(c) + (BOLD if b else "") + ch + RESET)
+                    if ch:  # empty: the right half of a wide glyph drawn in the cell before
+                        line.append(bg(back) + fg(c) + (BOLD if b else "") + ch + RESET)
                     cur_fg = cur_bg = None
                     continue
                 mask = 0
@@ -580,8 +703,8 @@ def local(dt):
     return dt.astimezone()
 
 
-def panel_lines(iss, st, cfg, passes, pal):
-    """(text, colour, bold) rows for the side panel."""
+def live_lines(iss, st, pal, light):
+    """The seven lines beside the squatch."""
     L = []
     add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
     ns = "N" if st["lat"] >= 0 else "S"
@@ -591,17 +714,27 @@ def panel_lines(iss, st, cfg, passes, pal):
     add(f"Lon   {abs(st['lon']):6.2f}° {ew}")
     add(f"Alt   {st['alt']:6.0f} km")
     add(f"Speed {st['speed']:6,.0f} km/h")
-    add(f"Orbit #{iss.orbit_number(st['time']):,}", "muted")
-    add("In sunlight" if st["sunlit"] else "In Earth's shadow", "yellow" if st["sunlit"] else "muted")
-    add()
+    add("Over " + over(st["lat"], st["lon"]), "accent")
+    if light:
+        kind, t = light
+        mins = round((t - st["time"]).total_seconds() / 60)  # found in 20 s steps, so minutes are honest
+        add(f"{'Sunset' if kind == 'sunset' else 'Sunrise'} in {mins} min" if mins >= 1 else
+            f"{'Sunset' if kind == 'sunset' else 'Sunrise'} now",
+            "yellow" if st["sunlit"] else "muted")
+    else:
+        add("In sunlight" if st["sunlit"] else "In Earth's shadow", "yellow" if st["sunlit"] else "muted")
+    return L
+
+
+def passes_lines(st, cfg, passes, pal):
+    L = []
+    add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
     if "lat" not in cfg:
-        add("PASSES", "cyan", True)
         add("Set your location:", "muted")
         add("issquatch setup", "accent")
         return L
     place = cfg.get("place") or f"{cfg['lat']:.2f}, {cfg['lon']:.2f}"
-    add("VISIBLE FROM", "cyan", True)
-    add(place[:30], "muted")
+    add("Visible from " + place, "muted")
     now = st["time"]
     az, el = look_angles(cfg["lat"], cfg["lon"], st["ecef"])
     if el > 0:
@@ -629,6 +762,61 @@ def panel_lines(iss, st, cfg, passes, pal):
     return L
 
 
+def crew_lines(info, pal, flags):
+    L = []
+    add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
+    aboard, elsewhere, expedition = crew(info)
+    if not info:
+        add("Crew list not loaded yet.", "muted")
+        add("It needs a connection once.", "muted")
+        return L
+    add(f"Expedition {expedition} · {len(aboard)} aboard" if expedition else f"{len(aboard)} aboard", "accent", True)
+    now_ts = time.time()
+    for person in aboard:
+        name = person.get("name", "?")
+        if "Commander" in (person.get("position") or ""):
+            name += " ★"
+        days = int((now_ts - person.get("launched", now_ts)) // 86400)
+        add(f"{flag(person.get('flag_code'), flags)} {name[:18]:<18} {(person.get('agency') or '')[:9]:<9} {days:>3}d")
+    if elsewhere:
+        add()
+        add("ALSO IN SPACE", "cyan", True)
+        groups = {}
+        for person in elsewhere:
+            groups.setdefault((person.get("spacecraft") or "elsewhere", person.get("flag_code")), []).append(person)
+        for (craft, code), group in groups.items():
+            where = f"on Tiangong ({craft})" if "Shenzhou" in craft else f"aboard {craft}"
+            add(f"{flag(code, flags)} {len(group)} {where}", "muted")
+    add()
+    add(f"{len(aboard) + len(elsewhere)} people in space right now", "foreground", True)
+    return L
+
+
+def station_lines(iss, st, info, pal, flags):
+    L = []
+    add = lambda s="", c="foreground", b=False: L.append((s, pal[c], b))
+    docked = (info or {}).get("docked", {}).get("spacecraft", []) if info else []
+    if docked:
+        add(f"{len(docked)} spacecraft docked", "accent", True)
+        now_ts = time.time()
+        for craft in sorted(docked, key=lambda c: c.get("docked") or 0):
+            kind = (craft.get("mission_type") or "").lower()
+            days = int((now_ts - (craft.get("docked") or now_ts)) // 86400)
+            add(f"{flag(craft.get('flag_code'), flags)} {(craft.get('name') or '?')[:18]:<18} {kind[:6]:<6} {days:>4}d")
+        add()
+    period = 2 * math.pi / iss.sat.no_kozai  # minutes
+    add("THE STATION", "cyan", True)
+    add(f"Orbit #{iss.orbit_number(st['time']):,}")
+    add(f"One lap every {period:.1f} minutes")
+    add(f"{1440 / period:.1f} sunrises a day")
+    add(f"Day {(st['time'] - ISS_LAUNCH).days:,} in orbit")
+    add(f"{st['speed'] / 3600:.1f} km every second", "muted")
+    return L
+
+
+PAGES = ["passes", "crew", "station"]
+
+
 def draw(state):
     cols, rows = shutil.get_terminal_size()
     pal = state["pal"]
@@ -636,7 +824,7 @@ def draw(state):
     now = datetime.now(timezone.utc)
     st = iss.at(now)
     scr = Screen(cols, rows, state["mode"])
-    panel_w = 38 if cols >= 100 else 0
+    panel_w = 40 if cols >= 100 else 0
     map_w = cols - panel_w
     map_h = min(rows - 2, max(4, round(map_w / 4)))  # a 2:1 world, since cells are twice as tall as wide
     top = max(1, (rows - 1 - map_h) // 2)
@@ -650,8 +838,7 @@ def draw(state):
 
     if panel_w:
         x = map_w + 2
-        lines = panel_lines(iss, st, cfg, state["passes"], pal)
-        live, rest = lines[:7], lines[8:]  # LIVE and its six lines sit beside the squatch
+        live = live_lines(iss, st, pal, next_light_change(iss, now))
         y = 1
         if rows >= 20:  # the squatch, suited up, keeps watch beside the live numbers
             draw_head(scr, x, y, pal)
@@ -659,11 +846,26 @@ def draw(state):
                 scr.write(x + 18, y + i, s, c, b)
             y += 9
         else:
-            rest = lines
-        for s, c, b in rest:
+            for s, c, b in live:
+                scr.write(x, y, s, c, b)
+                y += 1
+            y += 1
+        # the lower half is a page: passes, crew or the station itself
+        page = state["page"]
+        tx = x
+        for i, name in enumerate(PAGES):
+            label = f"{i + 1} {name.upper()}"
+            scr.write(tx, y, label, pal["cyan"] if name == page else pal["muted"], name == page)
+            tx += len(label) + 2
+        y += 2
+        flags = cfg.get("flags", "emoji")
+        body = (passes_lines(st, cfg, state["passes"], pal) if page == "passes" else
+                crew_lines(state["info"], pal, flags) if page == "crew" else
+                station_lines(iss, st, state["info"], pal, flags))
+        for s, c, b in body:
             if y >= rows - 1:
                 break
-            scr.write(x, y, s, c, b)
+            scr.write(x, y, s[:cols - x - 1], c, b)
             y += 1
 
     else:  # narrow window: two status lines under the map instead of the panel
@@ -684,9 +886,9 @@ def draw(state):
         scr.write(1, y + 1, line, pal[c])
 
     age = time.time() - iss.fetched
-    keys = "q quit · t track · r refresh orbit"
+    keys = "q quit · tab/1-3 pages · t track · r refresh"
     scr.write(1, rows - 1, keys, pal["muted"])
-    note = f"orbit data {fmt_dur(age)} old · CelesTrak"
+    note = f"orbit {fmt_dur(age)} old · CelesTrak" + (" · crew: corquaid" if state["page"] != "passes" else "")
     scr.write(cols - len(note) - 1, rows - 1, note, pal["muted"])
     sys.stdout.write(scr.render(pal["background"]))
     sys.stdout.flush()
@@ -697,7 +899,15 @@ def draw(state):
 def tui():
     cfg = load_config()
     state = {"iss": ISS(), "cfg": cfg, "land": load_land(), "pal": load_theme(), "track": True, "mode": block_mode(cfg),
-             "passes": None, "passes_at": 0, "theme_mtime": 0}
+             "passes": None, "passes_at": 0, "theme_mtime": 0, "info": None,
+             "page": "passes" if "lat" in cfg else "crew"}
+
+    def fetch_info():  # crew and docked spacecraft, off the main loop so the map never waits
+        while True:
+            state["info"] = load_station_info() or state["info"]
+            time.sleep(600)
+
+    threading.Thread(target=fetch_info, daemon=True).start()
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     resized = [True]
@@ -727,6 +937,10 @@ def tui():
                     break
                 if k == "t":
                     state["track"] = not state["track"]
+                if k == "\t":
+                    state["page"] = PAGES[(PAGES.index(state["page"]) + 1) % len(PAGES)]
+                if k in ("1", "2", "3"):
+                    state["page"] = PAGES[int(k) - 1]
                 if k == "r":
                     state["iss"] = ISS(force=True)
                     state["passes"], state["passes_at"] = None, 0
@@ -746,7 +960,11 @@ def cmd_now(args):
     cfg = load_config()
     if "--json" in args:
         out = {k: round(st[k], 4) for k in ("lat", "lon", "alt", "speed")}
-        out.update(sunlit=st["sunlit"], orbit=iss.orbit_number(st["time"]))
+        out.update(sunlit=st["sunlit"], orbit=iss.orbit_number(st["time"]), over=over(st["lat"], st["lon"]))
+        aboard, _, expedition = crew(load_station_info())
+        if aboard:
+            out.update(expedition=expedition, crew=[{"name": p.get("name"), "agency": p.get("agency"),
+                                                    "country": p.get("country")} for p in aboard])
         passes = visible_passes(iss, cfg, days=2) if "lat" in cfg else None
         if passes:
             out["next_visible_pass"] = {"start": passes[0]["vis_start"].isoformat(), "max_el": round(passes[0]["max_el"]),
@@ -754,8 +972,28 @@ def cmd_now(args):
         print(json.dumps(out))
         return
     ns, ew = ("N" if st["lat"] >= 0 else "S"), ("E" if st["lon"] >= 0 else "W")
-    print(f"ISS {abs(st['lat']):.1f}°{ns} {abs(st['lon']):.1f}°{ew} · {st['alt']:.0f} km · "
-          f"{st['speed']:,.0f} km/h · {'sunlit' if st['sunlit'] else 'in shadow'}")
+    print(f"ISS {abs(st['lat']):.1f}°{ns} {abs(st['lon']):.1f}°{ew} over {over(st['lat'], st['lon'])} · "
+          f"{st['alt']:.0f} km · {st['speed']:,.0f} km/h · {'sunlit' if st['sunlit'] else 'in shadow'}")
+
+
+def cmd_crew(args):
+    info = load_station_info(force="--refresh" in args)
+    aboard, elsewhere, expedition = crew(info)
+    if not info:
+        raise SystemExit("issquatch: couldn't load the crew list (no connection and nothing cached).")
+    style = load_config().get("flags", "emoji")
+    print(f"Expedition {expedition}: {len(aboard)} aboard the ISS\n")
+    now_ts = time.time()
+    for p in aboard:
+        days = int((now_ts - p.get("launched", now_ts)) // 86400)
+        print(f"  {flag(p.get('flag_code'), style)} {p.get('name', '?'):<22} {p.get('agency', ''):<10} "
+              f"{p.get('position', ''):<16} {p.get('spacecraft', ''):<16} {days}d")
+    if elsewhere:
+        print(f"\nAlso in space: " + ", ".join(f"{p.get('name')} ({p.get('spacecraft')})" for p in elsewhere))
+    docked = info.get("docked", {}).get("spacecraft", [])
+    if docked:
+        print("\nDocked: " + ", ".join(f"{c.get('name')} ({(c.get('mission_type') or '').lower()})" for c in docked))
+    print(f"\n{len(aboard) + len(elsewhere)} people in space right now. Data: corquaid's ISS APIs.")
 
 
 def cmd_passes(args):
@@ -844,8 +1082,9 @@ def cmd_notify(args):
 
 HELP = f"""issquatch {VERSION}: the ISS, tracked from the woods.
 
-  issquatch                  the live map (q quits, t toggles the ground track, r refreshes the orbit)
+  issquatch                  the live map (tab or 1-3 switch passes/crew/station, t track, r refresh, q quit)
   issquatch now [--json]     where it is right now, in one line
+  issquatch crew             who's aboard, with flags, and what's docked
   issquatch passes [--all] [--week]
                              visible passes from your location (--all includes unlit ones)
   issquatch setup [PLACE]    set your location: a place name, or "lat, lon"
@@ -872,6 +1111,8 @@ def main():
         cmd_now(rest)
     elif cmd == "passes":
         cmd_passes(rest)
+    elif cmd == "crew":
+        cmd_crew(rest)
     elif cmd == "setup":
         cmd_setup(rest)
     elif cmd == "notify":

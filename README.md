@@ -13,14 +13,24 @@
 
 Press <kbd>Super</kbd> + <kbd>Alt</kbd> + <kbd>I</kbd> and a little window pops up over your
 tiles. It shows a pixel world map with the day/night line, the station, the last 45 minutes of
-its ground track and the next 90, plus a panel with its speed, height and whether it's in
-sunlight, watched over by the squatch in a space helmet. Tell it where you live and it lists the
-passes you can actually see (the station lit by the sun while your sky is dark), then taps you on
-the shoulder ten minutes before a good one.
+its ground track and the next 90. Beside it, the squatch in a space helmet keeps watch over the
+live numbers: speed, height, the country or ocean it's flying over, and the countdown to its next
+sunrise or sunset (it gets about sixteen a day).
+
+Underneath are three pages (<kbd>Tab</kbd> or <kbd>1</kbd>–<kbd>3</kbd>):
+
+- **Passes:** the ones you can actually see from where you live (the station lit by the sun while
+  your sky is dark). It taps you on the shoulder ten minutes before a good one.
+- **Crew:** who's aboard, with their flags, agencies and days in space, the commander starred,
+  the expedition number, and who else is up there (Tiangong counts).
+- **Station:** every spacecraft docked and for how long, plus the orbit number, the length of a
+  lap and how many days the station has been up.
 
 It wears your Omarchy theme and repaints when you switch.
 
 ![issquatch in the Commodore 64, Phosphor Green, Nixie and Teletext themes](docs/themes.png)
+
+<p align="center"><img src="docs/station.png" alt="The station page: five docked spacecraft with flags and days docked, then the orbit number, a 93-minute lap, 15.5 sunrises a day and day 10,173 in orbit" width="320"></p>
 
 ## Install
 
@@ -48,10 +58,12 @@ the keybinding, and turns on a systemd user timer for pass notifications. Pick a
 | Key / command | What it does |
 |---|---|
 | <kbd>Super</kbd> + <kbd>Alt</kbd> + <kbd>I</kbd> | Open the map, or focus it if it's already open |
+| <kbd>Tab</kbd> · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Next page · passes, crew, station |
 | <kbd>t</kbd> · <kbd>r</kbd> · <kbd>q</kbd> | Toggle the ground track · refresh the orbit · quit |
 | `issquatch setup [PLACE]` | Set your location: a town, an address, or `lat, lon` |
 | `issquatch passes [--all] [--week]` | Visible passes for the next 3 (or 7) days. `--all` adds the unlit ones |
-| `issquatch now [--json]` | One line of where it is right now, for scripts and bars |
+| `issquatch now [--json]` | One line of where it is right now, for scripts and bars (the JSON includes the crew) |
+| `issquatch crew [--refresh]` | Who's aboard, with flags, and what's docked |
 | `issquatch notify [--test]` | What the timer runs. `--test` sends the next one immediately |
 
 Settings live in `~/.config/issquatch/config.toml`:
@@ -64,6 +76,7 @@ notify_minutes = 10         # how far ahead to warn you
 min_elevation = 10          # ignore passes lower than this
 notify_min_elevation = 20   # only notify for passes that climb at least this high
 blocks = "auto"             # "octant" (sharp, needs Ghostty or kitty) or "half" (works everywhere)
+flags = "emoji"             # "letters" shows country codes instead, for terminals without colour emoji
 ```
 
 ## How it works
@@ -76,8 +89,12 @@ blocks = "auto"             # "octant" (sharp, needs Ghostty or kitty) or "half"
 - **Map:** Natural Earth's 1:110m coastlines (public domain), baked into a half-degree bitmap. In
   Ghostty and kitty it's drawn with Unicode 16 octants, eight square pixels to a character; other
   terminals get half blocks, two to a character. The night side comes from the subsolar point.
+- **Flying over:** Natural Earth's 1:50m country borders, baked into a quarter-degree grid (32 KB),
+  so the country under the station is worked out offline. Open water gets its ocean or sea.
+- **Crew and docked spacecraft:** [corquaid's ISS APIs](https://github.com/corquaid/international-space-station-APIs),
+  a community-maintained feed, fetched in the background and cached for six hours.
 - **Privacy:** a place name is looked up once with OpenStreetMap's Nominatim when you run
-  `setup`. Nothing else leaves your machine apart from the CelesTrak download.
+  `setup`. Apart from that, only the CelesTrak orbit and the crew feed are downloaded.
 
 ## License
 
