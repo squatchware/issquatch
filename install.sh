@@ -23,6 +23,7 @@ VENV="$DATA/venv"
 CLONE="$DATA/src"
 BIN="$HOME/.local/bin/issquatch"
 DESKTOP="$HOME/.local/share/applications/issquatch.desktop"
+ICONS="$HOME/.local/share/icons/hicolor"
 UNITS="$HOME/.config/systemd/user"
 
 say() { printf '\033[1;33m▸\033[0m %s\n' "$*"; }
@@ -34,7 +35,7 @@ uninstall() {
   systemctl --user disable --now issquatch-notify.timer >/dev/null 2>&1 || true
   rm -f "$UNITS/issquatch-notify.service" "$UNITS/issquatch-notify.timer"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  rm -f "$MODULE" "$DESKTOP"
+  rm -f "$MODULE" "$DESKTOP" "$ICONS"/scalable/apps/issquatch.svg "$ICONS"/{48x48,128x128,256x256}/apps/issquatch.png
   [[ -L $BIN ]] && rm -f "$BIN"
   if grep -qF -- "-- issquatch" "$HYPR/hyprland.lua" 2>/dev/null; then
     backup "$HYPR/hyprland.lua"
@@ -74,12 +75,18 @@ say "Setting up Python (sgp4, the standard orbit propagator)"
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$DESKTOP")"
 ln -sf "$dir/bin/issquatch" "$BIN"
+# the app icon: the squatch in his helmet, for launchers and the app menu
+install -Dm644 "$dir/share/issquatch.svg" "$ICONS/scalable/apps/issquatch.svg"
+for size in 48 128 256; do
+  install -Dm644 "$dir/share/issquatch-$size.png" "$ICONS/${size}x${size}/apps/issquatch.png"
+done
+gtk-update-icon-cache -q "$ICONS" 2>/dev/null || true
 cat >"$DESKTOP" <<EOF
 [Desktop Entry]
 Name=issquatch
 Comment=Track the International Space Station
 Exec=omarchy-launch-or-focus-tui issquatch
-Icon=weather-clear-night
+Icon=issquatch
 Terminal=false
 Type=Application
 Categories=Education;Science;Astronomy;

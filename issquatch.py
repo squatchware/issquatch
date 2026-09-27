@@ -1194,7 +1194,7 @@ def cmd_notify(args):
         mins = max(0, round((p["vis_start"] - now).total_seconds() / 60))
         body = (f"Look {p['from']} at {local(p['vis_start']).strftime('%H:%M')}. It climbs to {p['max_el']:.0f}° "
                 f"and heads {p['to']}, visible for {fmt_dur((p['vis_end'] - p['vis_start']).total_seconds())}.")
-        subprocess.run(["notify-send", "-a", "issquatch", "-i", "weather-clear-night",
+        subprocess.run(["notify-send", "-a", "issquatch", "-i", str(HERE / "share" / "issquatch-128.png"),
                         f"ISS overhead in {mins} min" if mins else "ISS overhead now", body], check=False)
         if "--test" in args:
             return  # a test shouldn't use up the real notification
