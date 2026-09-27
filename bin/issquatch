@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# issquatch launcher: runs issquatch.py with the virtualenv install.sh made (or the checkout's .venv).
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+for py in "${ISSQUATCH_VENV:-$HOME/.local/share/issquatch/venv}/bin/python" "$here/.venv/bin/python"; do
+  [[ -x $py ]] && exec "$py" "$here/issquatch.py" "$@"
+done
+echo "issquatch: no virtualenv found. Run install.sh from $here first." >&2
+exit 1

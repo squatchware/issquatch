@@ -1,0 +1,6 @@
+[Unit]
+Description=issquatch: notify before a visible ISS pass
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/issquatch notify
